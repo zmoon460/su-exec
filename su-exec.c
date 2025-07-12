@@ -60,6 +60,13 @@ extern int execvpe(const char *file, char *const argv[], char *const envp[]); /*
 /* Global variable for program name */
 char *argv0;
 
+/* Function declarations for C89 compliance */
+static void usage(int exitcode);
+static int is_user_locked(const struct passwd *pw);
+static void sanitize_std_fds(void);
+static void sanitize_environment(void);
+static char* find_in_path(const char *prog, const char *path, char *result, size_t size);
+
 /* Usage function */
 static void usage(int exitcode)
 {
@@ -78,6 +85,11 @@ int main(int argc, char *argv[])
         argv0 = argv[0];
         if (argc < 3)
                 usage(0);
+
+        /* Save original user-spec for error messages */
+        char *user_spec = strdup(argv[1]);
+        if (!user_spec)
+                err(1, "memory allocation failed");
 
         /* 防止修改原始参数 */
         char *original_argv0 = strdup(argv[0]);
@@ -147,8 +159,8 @@ int main(int argc, char *argv[])
                         memset(pwbuf_mem, 0, sizeof(pwbuf_mem));
 
                         if (getpwnam_r(user, &pwbuf, pwbuf_mem, sizeof(pwbuf_mem), &pw) != 0 || !pw) {
-                                /* Format error message consistently with gosu */
-                                err(1, "getpwnam(%s)", user);
+                                errx(1, "error: failed switching to \"%s\": unable to find user %s",
+                                     user_spec, user);
                         }
                         uid = pw->pw_uid;
 
@@ -202,49 +214,13 @@ int main(int argc, char *argv[])
                         memset(grpbuf_mem, 0, sizeof(grpbuf_mem));
 
                         if (getgrnam_r(group, &grpbuf, grpbuf_mem, sizeof(grpbuf_mem), &gr) != 0 || !gr) {
-                                /* 统一错误信息格式，与 gosu 保持一致 */
-                                err(1, "getgrnam(%s)", group);
+                                errx(1, "error: failed switching to \"%s\": unable to find group %s",
+                                     user_spec, group);
                         }
 
                         gid = gr->gr_gid;
                 }
         }
-
-        /* 更安全的组设置 */
-        if (pw == NULL) {
-                if (setgroups(1, &gid) < 0)
-                        err(1, "setgroups(%i)", gid);
-        } else {
-                int ngroups = 0;
-                gid_t *glist = NULL;
-
-                while (1) {
-                        int r = getgrouplist(pw->pw_name, gid, glist, &ngroups);
-
-                        if (r >= 0) {
-                                /* 验证组数量限制 */
-                                if (ngroups > NGROUPS_MAX)
-                                        err(1, "用户组太多");
-
-                                if (setgroups(ngroups, glist) < 0)
-                                        err(1, "setgroups");
-                                break;
-                        }
-
-                        /* 限制最大分配大小 */
-                        if (ngroups > 1024)
-                                err(1, "组列表过大");
-
-                        gid_t *new_glist = realloc(glist, ngroups * sizeof(gid_t));
-                        if (new_glist == NULL)
-                                err(1, "内存分配失败");
-                        glist = new_glist;
-                }
-
-                if (glist)
-                        free(glist);
-        }
-
 
         /* 检查用户是否被锁定 */
         if (pw != NULL && is_user_locked(pw)) {
@@ -268,9 +244,6 @@ int main(int argc, char *argv[])
                 err(1, "setuid(%i)", uid);
 
         (void)is_user_locked;  /* Suppress unused function warning */
-
-        /* 在执行前重新设置必要的环境变量 */
-        sanitize_environment();
 
         /* 设置 HOME 环境变量为用户家目录（如果尚未设置） */
         if (!getenv("HOME") && pw && pw->pw_dir && pw->pw_dir[0]) {
@@ -303,6 +276,7 @@ int main(int argc, char *argv[])
         free(original_argv0);
         free(user);
 
+        free(user_spec);
         return 1;
 }
 
