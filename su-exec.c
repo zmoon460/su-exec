@@ -150,6 +150,10 @@ int main(int argc, char *argv[])
                         /* 使用数字 UID */
                         uid = nuid;
                         pw = getpwuid(uid);
+                        if (pw == NULL) {
+                                errx(1, "error: failed switching to \"%s\": unable to find UID %s",
+                                     user_spec, user);
+                        }
                 } else {
                         // 使用用户名
                         struct passwd pwbuf;
@@ -169,11 +173,6 @@ int main(int argc, char *argv[])
                                 errx(1, "error: failed switching to \"%s\": user is locked", user);
                         }
                 }
-        }
-
-        /* If user is explicitly specified but not found, use current user */
-        if (pw == NULL) {
-                pw = getpwuid(getuid());
         }
 
         /* 如果仍然找不到用户信息，返回错误 */
