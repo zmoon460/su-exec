@@ -78,6 +78,8 @@ int main(int argc, char *argv[])
 {
         char *user, *group, **cmdargv;
         char *end;
+        char *path;
+        char exec_path[PATH_MAX];
 
         uid_t uid = getuid();
         gid_t gid = getgid();
@@ -123,24 +125,9 @@ int main(int argc, char *argv[])
 
         cmdargv = &argv[2];
 
-        /* Find executable in PATH */
-        char *path = getenv("PATH");
-        if (!path)
-                path = _PATH_DEFPATH;
-
-        char exec_path[PATH_MAX];
-        if (strchr(cmdargv[0], '/')) {
-                /* Absolute or relative path */
-                if (access(cmdargv[0], X_OK) == 0) {
-                        strncpy(exec_path, cmdargv[0], sizeof(exec_path));
-                } else {
-                        err(1, "cannot access '%s'", cmdargv[0]);
-                }
-        } else {
-                /* Search in PATH */
-                if (find_in_path(cmdargv[0], path, exec_path, sizeof(exec_path)) == NULL) {
-                        err(1, "cannot find executable '%s'", cmdargv[0]);
-                }
+        /* 确保PATH环境变量安全 */
+        if (!getenv("PATH")) {
+                setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
         }
 
         struct passwd *pw = NULL;
@@ -180,12 +167,11 @@ int main(int argc, char *argv[])
                 err(1, "无法获取用户信息");
         }
 
-        /* 设置 HOME 环境变量 */
+        /* 强制设置 HOME 为目标用户目录 (无条件覆盖) */
         if (pw != NULL && pw->pw_dir != NULL && pw->pw_dir[0] != '\0') {
-                /* 直接使用用户家目录，不使用 realpath 避免将 /nonexistent 转换为 / */
-                setenv("HOME", pw->pw_dir, 1);
+                setenv("HOME", pw->pw_dir, 1);  /* overwrite=1 */
         } else {
-                setenv("HOME", "/", 1);
+                setenv("HOME", "/", 1);  /* overwrite=1 */
         }
 
         /* 如果用户有指定 shell，则设置 SHELL 环境变量 */
@@ -231,8 +217,18 @@ int main(int argc, char *argv[])
                 if (setgroups(1, &gid) < 0)
                         err(1, "setgroups(%i)", gid);
         } else {
-                if (initgroups(pw->pw_name, gid) < 0)
-                        err(1, "initgroups");
+                /* 获取组列表并检查数量 */
+                int ngroups = NGROUPS_MAX;
+                gid_t groups[NGROUPS_MAX];
+
+                if (getgrouplist(pw->pw_name, gid, groups, &ngroups) == -1)
+                        err(1, "getgrouplist");
+
+                if (ngroups > NGROUPS_MAX)
+                        errx(1, "too many groups (%d > %d)", ngroups, NGROUPS_MAX);
+
+                if (setgroups(ngroups, groups) < 0)
+                        err(1, "setgroups");
         }
 
 
@@ -244,25 +240,21 @@ int main(int argc, char *argv[])
 
         (void)is_user_locked;  /* Suppress unused function warning */
 
-        /* 设置 HOME 环境变量为用户家目录（如果尚未设置） */
-        if (!getenv("HOME") && pw && pw->pw_dir && pw->pw_dir[0]) {
-                setenv("HOME", pw->pw_dir, 1);
-        }
 
         /* 设置 SHELL 环境变量为用户shell（如果尚未设置） */
         if (!getenv("SHELL") && pw && pw->pw_shell && pw->pw_shell[0]) {
                 setenv("SHELL", pw->pw_shell, 1);
         }
 
-        /* 确保标准文件描述符存在且安全打开 */
-        sanitize_std_fds();
-
-        /* 重置 umask */
-        umask(S_IWGRP | S_IWOTH);
+        /* Set path for executable lookup */
+        path = getenv("PATH");
+        if (!path) {
+            path = _PATH_DEFPATH;
+        }
 
         /* Find executable in PATH */
         if (find_in_path(cmdargv[0], path, exec_path, sizeof(exec_path)) == NULL) {
-                err(1, "cannot find executable '%s'", cmdargv[0]);
+            err(1, "cannot find executable '%s'", cmdargv[0]);
         }
 
         /* Execute command */
