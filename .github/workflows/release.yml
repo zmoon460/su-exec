@@ -25,7 +25,8 @@ jobs:
           gpgcheck=0
           gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
           enabled=1
-          EOF &&
+        EOF &&
+          cat /etc/yum.repos.d/C7.6.1810-fasttrack.repo
           yum install -y gcc glibc-static make &&
           cd /build &&
           make ARCH=${{ matrix.arch }} CC=gcc CFLAGS='-O2 -static -fPIC'
