@@ -53,7 +53,7 @@ jobs:
         cat /etc/yum.repos.d/C7.6.1810.repo &&
         yum install -y gcc glibc-static make &&
         cd /build &&
-        make ARCH=${{ matrix.arch }} CC=gcc CFLAGS='-O2 -static -fPIC'
+        make ARCH=${{ matrix.arch }} CC=gcc CFLAGS='-Wall -Werror -g'
         "
 
     - name: Collect artifacts
