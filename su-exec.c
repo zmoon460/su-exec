@@ -16,6 +16,7 @@
 #include <paths.h>
 #include <time.h>
 #include <shadow.h>
+#include <ctype.h>   /* For isalnum() */
 #include <dirent.h>
 #include <sys/wait.h>  /* For WEXITSTATUS */
 
@@ -66,6 +67,21 @@ static int is_user_locked(const struct passwd *pw);
 static void sanitize_std_fds(void);
 static void sanitize_environment(void);
 static char* find_in_path(const char *prog, const char *path, char *result, size_t size);
+static int is_valid_name(const char *name);
+
+/* Name validation function */
+static int is_valid_name(const char *name) {
+    if (!name || !*name) return 0;
+
+    const char *p = name;
+    while (*p) {
+        if (!(isalnum(*p) || *p == '_' || *p == '-' || *p == '.')) {
+            return 0; /* 包含非法字符 */
+        }
+        p++;
+    }
+    return 1; /* 名称合法 */
+}
 
 /* Usage function */
 static void usage(int exitcode)
@@ -76,6 +92,11 @@ static void usage(int exitcode)
 
 int main(int argc, char *argv[])
 {
+        /* 只允许root运行 */
+        if (getuid() != 0) {
+                errx(1, "must be run as root");
+        }
+
         char *user, *group, **cmdargv;
         char *end;
         char *path;
@@ -93,12 +114,12 @@ int main(int argc, char *argv[])
         if (!user_spec)
                 err(1, "memory allocation failed");
 
-        /* 防止修改原始参数 */
+        /* Prevent modification of original arguments */
         char *original_argv0 = strdup(argv[0]);
         if (!original_argv0)
-                err(1, "内存分配失败");
+                err(1, "memory allocation failed");
 
-        /* 确保标准文件描述符存在且安全打开 */
+        /* Ensure standard file descriptors exist and are safely opened */
         sanitize_std_fds();
 
         /* 重置 umask */
@@ -109,18 +130,20 @@ int main(int argc, char *argv[])
 
         user = strdup(argv[1]);  // 使用复制防止修改原始参数
         if (!user)
-                err(1, "内存分配失败");
+                err(1, "memory allocation failed");
 
         group = strchr(user, ':');
         if (group) {
                 *group++ = '\0';
                 // 验证组名长度
-#ifndef GROUP_NAME_MAX
-#define GROUP_NAME_MAX 32
-#endif
+                long name_max = sysconf(_SC_LOGIN_NAME_MAX);
+                if (name_max == -1) name_max = 32;  // Fallback
 
-                if (strlen(group) >= GROUP_NAME_MAX)
-                        err(1, "组名过长");
+                if (strlen(group) >= name_max)
+                        errx(1, "group name too long (max %ld chars)", name_max-1);
+                if (!is_valid_name(group)) {
+                    errx(1, "invalid group name: only alphanumeric/_-/. characters allowed");
+                }
         }
 
         cmdargv = &argv[2];
@@ -131,18 +154,23 @@ int main(int argc, char *argv[])
         }
 
         struct passwd *pw = NULL;
+        /* Validate username format */
+        /* Validate username format immediately */
+        if (!is_valid_name(user)) {
+            errx(1, "invalid username: only alphanumeric/_-/. allowed");
+        }
+
         if (user[0] != '\0') {
                 uid_t nuid = strtol(user, &end, 10);
                 if (*end == '\0') {
-                        /* 使用数字 UID */
-                        uid = nuid;
-                        pw = getpwuid(uid);
-                        if (pw == NULL) {
-                                errx(1, "error: failed switching to \"%s\": unable to find UID %s",
-                                     user_spec, user);
+                        /* 使用数字UID - 允许任意有效值 */
+                        if (nuid < 0 || nuid > 65535) {
+                            errx(1, "UID must be 0-65535 (got %d)", nuid);
                         }
+                        uid = nuid;
+                        pw = getpwuid(uid);  // 查询失败时pw=NULL仍继续执行
                 } else {
-                        // 使用用户名
+                        /* 使用用户名 - 必须存在 */
                         struct passwd pwbuf;
                         char pwbuf_mem[PATH_MAX];
 
@@ -150,44 +178,29 @@ int main(int argc, char *argv[])
                         memset(pwbuf_mem, 0, sizeof(pwbuf_mem));
 
                         if (getpwnam_r(user, &pwbuf, pwbuf_mem, sizeof(pwbuf_mem), &pw) != 0 || !pw) {
-                                errx(1, "error: failed switching to \"%s\": unable to find user %s",
-                                     user_spec, user);
+                                errx(1, "user '%s' does not exist", user);
                         }
                         uid = pw->pw_uid;
 
-                        // 检查用户锁定状态
+                        /* 仅对用户名检查锁定状态 */
                         if (is_user_locked(pw)) {
-                                errx(1, "error: failed switching to \"%s\": user is locked", user);
+                                errx(1, "account '%s' is locked", user);
                         }
                 }
         }
 
-        /* 如果仍然找不到用户信息，返回错误 */
-        if (pw == NULL) {
-                err(1, "无法获取用户信息");
-        }
 
-        /* 强制设置 HOME 为目标用户目录 (无条件覆盖) */
-        if (pw != NULL && pw->pw_dir != NULL && pw->pw_dir[0] != '\0') {
-                setenv("HOME", pw->pw_dir, 1);  /* overwrite=1 */
-        } else {
-                setenv("HOME", "/", 1);  /* overwrite=1 */
-        }
-
-        /* 如果用户有指定 shell，则设置 SHELL 环境变量 */
-        if (pw != NULL && pw->pw_shell != NULL && pw->pw_shell[0] != '\0') {
-                setenv("SHELL", pw->pw_shell, 1);
-        } else {
-                setenv("SHELL", "/bin/sh", 1);  /* 设置默认 SHELL */
-        }
 
         if (group && group[0] != '\0') {
-                /* 组被指定，忽略组列表以进行setgroups */
+                /* When group is specified, ignore supplementary groups */
                 pw = NULL;
 
                 gid_t ngid = strtol(group, &end, 10);
                 if (*end == '\0') {
                         /* 使用数字 GID */
+                        if (ngid < 0 || ngid > 65535) {
+                            errx(1, "GID must be 0-65535 (got %d)", ngid);
+                        }
                         gid = ngid;
                 } else {
                         /* 使用组名 */
@@ -199,8 +212,7 @@ int main(int argc, char *argv[])
                         memset(grpbuf_mem, 0, sizeof(grpbuf_mem));
 
                         if (getgrnam_r(group, &grpbuf, grpbuf_mem, sizeof(grpbuf_mem), &gr) != 0 || !gr) {
-                                errx(1, "error: failed switching to \"%s\": unable to find group %s",
-                                     user_spec, group);
+                                errx(1, "group '%s' does not exist", group);
                         }
 
                         gid = gr->gr_gid;
@@ -209,7 +221,7 @@ int main(int argc, char *argv[])
 
         /* 检查用户是否被锁定 */
         if (pw != NULL && is_user_locked(pw)) {
-                errx(1, "error: failed switching to \"%s\": user is locked", user);
+                errx(1, "user account locked: %s", user);
         }
 
         /* Set groups first */
@@ -232,19 +244,13 @@ int main(int argc, char *argv[])
         }
 
 
-        if (setgid(gid) < 0)
-                err(1, "setgid(%i)", gid);
-
-        if (setuid(uid) < 0)
-                err(1, "setuid(%i)", uid);
+        if (setgid(gid) < 0 || setuid(uid) < 0) {
+                err(1, "permanent drop privileges failed");
+        }
 
         (void)is_user_locked;  /* Suppress unused function warning */
 
 
-        /* 设置 SHELL 环境变量为用户shell（如果尚未设置） */
-        if (!getenv("SHELL") && pw && pw->pw_shell && pw->pw_shell[0]) {
-                setenv("SHELL", pw->pw_shell, 1);
-        }
 
         /* Set path for executable lookup */
         path = getenv("PATH");
@@ -254,18 +260,15 @@ int main(int argc, char *argv[])
 
         /* Find executable in PATH */
         if (find_in_path(cmdargv[0], path, exec_path, sizeof(exec_path)) == NULL) {
-            err(1, "cannot find executable '%s'", cmdargv[0]);
+            errx(1, "command not found: %s", cmdargv[0]);
         }
 
         /* Execute command */
+        if (exec_path[0] == '\0') {
+            errx(1, "empty executable path");
+        }
         execvpe(exec_path, cmdargv, environ);
-        err(1, "exec failed for '%s'", cmdargv[0]);
-
-        /* 清理敏感数据 */
-        memset(original_argv0, 0, strlen(original_argv0));
-        memset(user, 0, strlen(user));
-        free(original_argv0);
-        free(user);
+        err(1, "failed to execute %s", cmdargv[0]);
 
         free(user_spec);
         return 1;
@@ -276,7 +279,7 @@ static void sanitize_std_fds(void) {
         /* 如果 stdin、stdout、stderr 未打开，则打开 /dev/null */
         int fd = open(_PATH_DEVNULL, O_RDWR);
         if (fd < 0)
-                err(1, "无法打开 " _PATH_DEVNULL);
+                err(1, "failed to open %s", _PATH_DEVNULL);
 
         while (fd <= 2) {  /* stdin, stdout, stderr */
                 if (fd < 0)
@@ -292,9 +295,9 @@ static void sanitize_std_fds(void) {
         }
 }
 
-/* 环境变量清理 */
+/* Environment sanitization */
 static void sanitize_environment(void) {
-    /* 清除潜在危险的环境变量 */
+    /* Remove potentially dangerous environment variables */
     unsetenv("IFS");
     unsetenv("LD_PRELOAD");
     unsetenv("LD_LIBRARY_PATH");
@@ -305,17 +308,14 @@ static void sanitize_environment(void) {
     unsetenv("GETCONF");
     unsetenv("ENV");
     unsetenv("BASH_ENV");
+    unsetenv("PYTHONPATH");
+    unsetenv("RUBYOPT");
+    unsetenv("PERLLIB");
 
-    /* Keep original PATH if set */
-    if (!getenv("PATH")) {
-        setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
-    }
-    setenv("IFS", " \t\n", 1);
-
-    /* 保留原始SHELL环境变量（如果存在） */
-    const char *shell = getenv("SHELL");
-    if (shell) {
-        setenv("SHELL", shell, 0);
+    /* Sanitize PATH if contains relative paths */
+    char *path = getenv("PATH");
+    if (path && strstr(path, "..")) {
+        setenv("PATH", _PATH_DEFPATH, 1);
     }
 }
 
@@ -332,10 +332,12 @@ static char* find_in_path(const char *prog, const char *path, char *result, size
                 return NULL;
         }
 
+        char *orig_p = NULL;
         char *p = strdup(path);
-        if (!p) return NULL;
-
-        char *orig_p = p;
+        if (!p) {
+            return NULL;
+        }
+        orig_p = p;
         char *dir = strtok(p, ":");
 
         while (dir) {
