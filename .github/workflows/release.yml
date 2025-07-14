@@ -16,7 +16,8 @@ jobs:
 
     - name: Setup CentOS 7 build environment
       run: |
-        docker run --rm -v "$(pwd):/build" centos:7 bash -c "
+        docker run --rm -v "$(pwd):/build" centos:7.6.1810 bash -c "
+          sed -i '/baseurl=/s|http://mirror\.|http://vault.centos.org/7.6.1810/|g' /etc/yum.repos.d/CentOS-*.repo &&
           yum install -y gcc glibc-static make &&
           cd /build &&
           make ARCH=${{ matrix.arch }} CC=gcc CFLAGS='-O2 -static -fPIC'
