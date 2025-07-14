@@ -1,0 +1,35 @@
+name: Release Build
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup CentOS 7 build environment
+      run: |
+        docker run --rm -v "$(pwd):/build" centos:7 bash -c "
+          yum install -y gcc glibc-static make &&
+          cd /build &&
+          make ARCH=${{ matrix.arch }} CC=gcc CFLAGS='-O2 -static -fPIC'
+        "
+
+    - name: Collect artifacts
+      run: |
+        mkdir -p artifacts
+        mv su-exec artifacts/su-exec-${{ matrix.arch }}
+
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: artifacts/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
