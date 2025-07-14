@@ -18,34 +18,34 @@ jobs:
       run: |
         docker run --rm -v "$(pwd):/build" centos:7.6.1810 bash -c "
           rm -f /etc/yum.repos.d/CentOS-*.repo &&
-          cat <<EOF > /etc/yum.repos.d/C7.6.1810.repo
+          cat <<'EOF' > /etc/yum.repos.d/C7.6.1810.repo
         [C7.6.1810-base]
         name=CentOS-7.6.1810 - Base
-        baseurl=http://mirrors.ustc.edu.cn/centos-vault/7.6.1810/os/$basearch/
+        baseurl=https://mirrors.aliyun.com/centos-vault/7.6.1810/os/$basearch
         gpgcheck=0
         gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
         enabled=1
         [C7.6.1810-updates]
         name=CentOS-7.6.1810 - Updates
-        baseurl=http://mirrors.ustc.edu.cn/centos-vault/7.6.1810/updates/$basearch/
+        baseurl=https://mirrors.aliyun.com/centos-vault/7.6.1810/updates/$basearch
         gpgcheck=0
         gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
         enabled=1
         [C7.6.1810-extras]
         name=CentOS-7.6.1810 - Extras
-        baseurl=http://mirrors.ustc.edu.cn/centos-vault/7.6.1810/extras/$basearch/
+        baseurl=https://mirrors.aliyun.com/centos-vault/7.6.1810/extras/$basearch
         gpgcheck=0
         gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
         enabled=1
         [C7.6.1810-centosplus]
         name=CentOS-7.6.1810 - CentOSPlus
-        baseurl=http://mirrors.ustc.edu.cn/centos-vault/7.6.1810/centosplus/$basearch/
+        baseurl=https://mirrors.aliyun.com/centos-vault/7.6.1810/centosplus/$basearch
         gpgcheck=0
         gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
         enabled=1
         [C7.6.1810-fasttrack]
         name=CentOS-7.6.1810 - Fasttrack
-        baseurl=http://mirrors.ustc.edu.cn/centos-vault/7.6.1810/fasttrack/$basearch/
+        baseurl=https://mirrors.aliyun.com/centos-vault/7.6.1810/fasttrack/$basearch
         gpgcheck=0
         gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
         enabled=1
