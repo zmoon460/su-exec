@@ -17,7 +17,15 @@ jobs:
     - name: Setup CentOS 7 build environment
       run: |
         docker run --rm -v "$(pwd):/build" centos:7.6.1810 bash -c "
-          sed -i '/baseurl=/s|http://mirror\.|http://vault.centos.org/7.6.1810/|g' /etc/yum.repos.d/CentOS-*.repo &&
+          rm -f /etc/yum.repos.d/CentOS-*.repo &&
+          cat <<EOF > /etc/yum.repos.d/C7.6.1810-fasttrack.repo
+          [C7.6.1810-fasttrack]
+          name=CentOS-7.6.1810 - Fasttrack
+          baseurl=http://vault.centos.org/7.6.1810/fasttrack/\$basearch/
+          gpgcheck=0
+          gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+          enabled=1
+          EOF &&
           yum install -y gcc glibc-static make &&
           cd /build &&
           make ARCH=${{ matrix.arch }} CC=gcc CFLAGS='-O2 -static -fPIC'
